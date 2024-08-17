@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from pre_commit_license_headers.check_license_headers import main
+from pre_commit_license_headers.check_license_headers import DEFAULT_HEADER_TEMPLATE, main
 
 
 RESOURCES_PATH = Path(__file__).parent / "resources"
@@ -23,18 +23,19 @@ def get_abspath_str(filename: str) -> str:
 
 
 @pytest.mark.parametrize(
-    ("filename", "expected_retval"),
+    ("filename", "expected_retval", "additional_args"),
     (
-        ("valid_1.py", 0),
-        ("valid_2.py", 0),
-        ("invalid_owner.txt", 1),
-        ("missing_header.py", 1),
-        ("tokenize_fail.yaml", 2),
+        ("valid_1.py", 0, []),
+        ("valid_2.py", 0, []),
+        ("valid_2.py", 0, ["--template", "\n\n".join(DEFAULT_HEADER_TEMPLATE.splitlines()), "--strict"]),
+        ("invalid_owner.txt", 1, []),
+        ("missing_header.py", 1, []),
+        ("tokenize_fail.yaml", 2, []),
     ),
 )
-def test_check_license_headers(filename, expected_retval):
+def test_check_license_headers(filename, expected_retval, additional_args):
     pathstr = get_abspath_str(filename)
-    args = base_args + [pathstr]
+    args = base_args + [pathstr] + additional_args
     print(args)
     with pytest.raises(SystemExit) as e:
         main(args)
@@ -48,15 +49,6 @@ def test_short_mismatch(capsys):
     assert e.type == SystemExit
     stdout, _ = capsys.readouterr()
     assert "HEADER MISMATCH" in stdout
-    assert "[truncated]" not in stdout
-
-
-def test_long_mismatch(capsys):
-    with pytest.raises(SystemExit) as e:
-        main(base_args + [get_abspath_str("invalid_long.sh")])
-    assert e.type == SystemExit
-    stdout, _ = capsys.readouterr()
-    assert "[truncated]" in stdout
 
 
 def test_non_text_file(capsys):

@@ -32,12 +32,10 @@ be found in the LICENSE file or at https://opensource.org/licenses/BSD-3-Clause
 """
 
 
-def check_license_headers(filepath: Path, header_pattern: str, debug: bool) -> bool:
+def collect_content_lines(filepath: Path) -> str:
     content_lines = []
-
     with filepath.open() as f:
         tokens_generator = list(tokenize.generate_tokens(f.readline))
-
         for token in tokens_generator:
             if token.type not in HEADER_TOKENS:
                 # we've reached the end of the header
@@ -55,30 +53,78 @@ def check_license_headers(filepath: Path, header_pattern: str, debug: bool) -> b
             comment = line.replace("#", "").strip()
             if comment:
                 content_lines.append(comment)
+    return content_lines
+
+
+def collect_content_lines_strict(filepath: Path) -> str:
+    content_lines = []
+    encountered_good_line = False
+    previous_is_newline = False
+    with filepath.open() as f:
+        tokens_generator = list(tokenize.generate_tokens(f.readline))
+        for token in tokens_generator:
+            if token.string == "\n":
+                if encountered_good_line and previous_is_newline:
+                    break
+                else:
+                    previous_is_newline = True
+                    continue
+            previous_is_newline = False
+            if token.type not in HEADER_TOKENS:
+                # we've reached the end of the header
+                break
+            elif token.type != tokenize.COMMENT:
+                if encountered_good_line:
+                    break
+                else:
+                    continue
+
+            line = token.string
+            # skip shebang ('#!')
+            if any(regex.fullmatch(line) for regex in [SHEBANG_RE]):
+                continue
+
+            if not line.startswith("# ") and not line == "#":
+                if encountered_good_line:
+                    break
+                else:
+                    continue
+            encountered_good_line = True
+            comment = line[2:] if line.startswith("# ") else line[1:]
+            content_lines.append(comment)
+    return content_lines
+
+
+def check_license_headers(filepath: Path, header_pattern: str, debug: bool, strict: bool) -> bool:
+    if strict:
+        content_lines = collect_content_lines_strict(filepath)
+    else:
+        content_lines = collect_content_lines(filepath)
 
     if debug:
         print(f"DEBUG: found {len(content_lines)} header content lines")
 
-    content = " ".join(content_lines)
+    content = ("\n" if strict else " ").join(content_lines)
 
     if not content:
         print(f"MISSING HEADER {filepath}")
         return False
 
     if not re.fullmatch(header_pattern, content):
-        if len(content_lines) > 5:
-            content = f"{' '.join(content_lines[:5])}...\n[truncated]"
-        print(f"HEADER MISMATCH {filepath}\n{content}")
+        print(f"HEADER MISMATCH {filepath} content:\n{repr(content)}\npattern:\n{repr(header_pattern)}")
         return False
 
     return True
 
 
-def get_header_pattern(header_template: str, owner: str, debug: bool) -> str:
+def get_header_pattern(header_template: str, owner: str, debug: bool, strict: bool) -> str:
     """Constructs the expected header regex pattern."""
     header_pattern: str
 
-    header_pattern = " ".join([x.strip() for x in header_template.splitlines()])
+    if strict:
+        header_pattern = header_template.rstrip('\n')
+    else:
+        header_pattern = " ".join([x.strip() for x in header_template.splitlines()])
     header_pattern = re.escape(header_pattern)
 
     if TEMPLATE_OWNER_KEY in header_template:
@@ -94,7 +140,7 @@ def get_header_pattern(header_template: str, owner: str, debug: bool) -> str:
         )
 
     if debug:
-        print(f"\nDEBUG expected header pattern:\n{header_pattern}\n")
+        print(f"\nDEBUG expected header pattern:\n{repr(header_pattern)}\n")
 
     return header_pattern
 
@@ -127,6 +173,7 @@ def process_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("-o", "--owner", default=None, metavar="COPYRIGHT_OWNER")
     parser.add_argument("-t", "--template", default=DEFAULT_HEADER_TEMPLATE)
     parser.add_argument("filenames", type=Path, nargs="*", metavar="FILE")
+    parser.add_argument("--strict", action="store_true", help="When set spaces and new lines must match exactly.")
     args = parser.parse_args(argv)
 
     if not args.file_types:
@@ -155,7 +202,7 @@ def process_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     args = process_args(argv)
-    expected_pattern = get_header_pattern(args.template, args.owner, args.debug)
+    expected_pattern = get_header_pattern(args.template, args.owner, args.debug, args.strict)
 
     valid: List[Path] = []
     invalid: List[Path] = []
@@ -188,6 +235,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 filepath,
                 expected_pattern,
                 debug=args.debug,
+                strict=args.strict,
             )
             if license_match:
                 valid.append(filepath)
